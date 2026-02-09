@@ -1,209 +1,114 @@
 #!/bin/bash
-# If you prefer a zsh keybinding check:
-# https://github.com/gessen/zsh-fzf-kill/blob/master/fzf-kill.plugin.zsh
 
+# ========================================================
+# fzf-kill macOS Port
+# ========================================================
 
 # PARAMETERS THAT CAN BE OVERRIDED BY THE USER (DEFAULTS)
 DETAILED_MODE="false"
 LOOP_MODE="false"
 EXCLUDE_LIST='myprogramtoexcludehere'
-FZF_DEFAULT_OPTS="--min-height=100 --prompt 'kill -9 '"
+# Exported to ensure subshells (like fzf) inherit these options
+export FZF_DEFAULT_OPTS="--min-height=20 --prompt 'kill -9 '"
 SHOW_ROOT="false"
 SHOW_HELP="false"
 
+# Use id -u for portable user ID detection on macOS
+CURRENT_UID=$(id -u)
 
 # PARSE PARAMETERS
 # ========================================================
-# Loop through all command line arguments
 for arg in "$@"; do
-  # Check if the argument contains the "all" string
-  if echo "$arg" | grep -q "all"; then
-    DETAILED_MODE="true"
-  fi
-
-  # Check if the argument contains the "loop" string
-  if echo "$arg" | grep -q "loop"; then
-    LOOP_MODE="true"
-  fi
-
-  # Check if the argument contains the "exclude=" string
-  if echo "$arg" | grep -q "exclude="; then
-    # Use cut to extract everything after the "=" symbol
-    EXCLUDE_LIST=$(echo "$arg" | cut -d= -f2-)
-  fi
-
-  # Check if the argument contains the "fzf_default_ops=" string
-  if echo "$arg" | grep -q "fzf_default_ops="; then
-    # Use cut to extract everything after the "=" symbol
-    FZF_DEFAULT_OPTS=$(echo "$arg" | cut -d= -f2-)
-  fi
-
-  # Check if the argument contains the "showroot" string
-  if echo "$arg" | grep -q "showroot"; then
-    # Pretend we are root during this program
-    SHOW_ROOT="true"
-  fi
-
-  # Check if the argument contains the "help" string
-  if echo "$arg" | grep -q "help"; then
-    # Use cut to extract everything after the "=" symbol
-    SHOW_HELP="true"
-  fi
-
+  [[ "$arg" == *"all"* ]] && DETAILED_MODE="true"
+  [[ "$arg" == *"loop"* ]] && LOOP_MODE="true"
+  [[ "$arg" == *"showroot"* ]] && SHOW_ROOT="true"
+  [[ "$arg" == *"help"* ]] && SHOW_HELP="true"
+  [[ "$arg" == *"exclude="* ]] && EXCLUDE_LIST=$(echo "$arg" | cut -d= -f2-)
+  [[ "$arg" == *"fzf_default_ops="* ]] && export FZF_DEFAULT_OPTS=$(echo "$arg" | cut -d= -f2-)
 done
-
 
 # FUNCTIONS
 # ========================================================
 
-# CONSTANTS
-EXTRACT_COLS_2_AND_8='{for(i=1;i<=NF;i++) if(i!=1 && i!=3 && i!=4 && i!=5 && i!=6 && i!=7) printf "%s ", $i; print ""}'
-
-
 detailed_mode(){
-  # Advanced mode (show subprocesses, if one is selected, parent is killed)
-  if [[ "${UID}" != "0" && $SHOW_ROOT = "false" ]]; then
-    pid=$(ps -f -u ${UID} | \
-      # Extract cols 2 and 8
-      awk "$EXTRACT_COLS_2_AND_8" | \
-      # Eliminate headers and started by this command.
-      sed 1d | head -n -6 | \
-      # Exclude specific words from the output
-      grep -vE "($EXCLUDE_LIST)" | \
-      # pipe to fzf
-      fzf -m | \
-      # Store the user selection on the pid variable
-      awk '{print $1}')
-  else
-    pid=$(ps -ef | \
-      # Extract cols 2 and 8
-      awk "$EXTRACT_COLS_2_AND_8" | \
-      # Eliminate headers
-      sed 1d | \
-      # Exclude specific words from the output
-      grep -vE "($EXCLUDE_LIST)" | \
-      # pipe to fzf
-      fzf -m | \
-      # Store the user selection on the pid variable
-      awk '{print $1}')
+  # macOS ps -ef: PID is col 2, CMD starts at col 8
+  local ps_cmd="ps -ef"
+  if [[ "$CURRENT_UID" != "0" && "$SHOW_ROOT" == "false" ]]; then
+    # Filter for user-owned processes only
+    ps_cmd="ps -u $CURRENT_UID -ef"
   fi
-  echo $pid
-  if [[ "x$pid" != "x" ]]; then
-    # Kill the process, no mater if child or parent is selected.
-    ps -o ppid $pid | sed 1d | xargs kill "-${1:-9}" > /dev/null 2>&1
-    kill -9 "$pid" > /dev/null 2>&1
+
+  # Extract PID from column 2
+  pid=$($ps_cmd | \
+    sed 1d | \
+    grep -vE "($EXCLUDE_LIST|fzf-kill)" | \
+    fzf -m | \
+    awk '{print $2}')
+
+  if [[ -n "$pid" ]]; then
+    # Kill process and its immediate parent if found
+    for p in $pid; do
+      ppid=$(ps -p "$p" -o ppid= | tr -d ' ')
+      kill -9 "$p" 2>/dev/null
+      [[ -n "$ppid" ]] && kill -9 "$ppid" 2>/dev/null
+    done
   fi
 }
 
 simple_mode(){
-  # Simple mode (We only list parent processes)
-  # (Slower but more visually appealing).
-  if [[ "${UID}" != "0" && $SHOW_ROOT = "false" ]]; then
-    # Extract running processes
-    pid=$(ps -f -u ${UID} | \
-      # Extract cols 2 and 8
-      awk "$EXTRACT_COLS_2_AND_8" | \
-      # Eliminate headers and started by this command.
-      sed 1d  | \
-      # Exclude specific words from the output
-      grep -vE "($EXCLUDE_LIST)" | \
-      # De-duplicate entries
-      awk '{if($2 in seen){}else{seen[$2]=$0; print}}' | \
-      # Get parent process
-      awk '{print $1}' | xargs echo | tr ' ' ',' | xargs -I{} sh -c 'ps -p {} -o pid=,comm=' | \
-      # pipe to fzf
-      awk '{print $1, $2}' | fzf -m | \
-      # Store the user selection on the pid variable
-      awk '{print $1}')
+  # Simple mode using BSD flags for clean PID and command name output
+  if [[ "$CURRENT_UID" != "0" && "$SHOW_ROOT" == "false" ]]; then
+    # User-specific processes
+    # macOS syntax: -u filters by user, -o defines columns
+    pid=$(ps -u "$CURRENT_UID" -o pid,comm | sed 1d)
   else
-    pid=$(ps -ef | \
-      # Extract cols 2 and 8
-      awk "$EXTRACT_COLS_2_AND_8" | \
-      # Eliminate headers and started by this command.
-      sed 1d | \
-      # Exclude specific words from the output
-      grep -vE "($EXCLUDE_LIST)" | \
-      # De-duplicate entries
-      awk '{if($2 in seen){}else{seen[$2]=$0; print}}' | \
-      # Get parent process
-      awk '{print $1}' | xargs echo | tr ' ' ',' | xargs -I{} sh -c 'ps -p {} -o pid=,comm=' | \
-      # pipe to fzf
-      awk '{print $1, $2}' | fzf -m | \
-      # Store the user selection on the pid variable
-      awk '{print $1}')  
+    # All processes
+    pid=$(ps -Ao pid,comm | sed 1d)
   fi
 
-  if [[ "x$pid" != "x" ]]; then
-    # Kill the parent process
-    kill -9 "$pid" 2>&1
+  # Pipe the result through the filters and fzf
+  selected_pid=$(echo "$pid" | \
+    grep -vE "($EXCLUDE_LIST|fzf-kill)" | \
+    awk '{if($2 in seen){}else{seen[$2]=$0; print}}' | \
+    fzf -m | \
+    awk '{print $1}')
+
+  if [[ -n "$selected_pid" ]]; then
+    echo "$selected_pid" | xargs kill -9 2>/dev/null
   fi
 }
 
 show_help(){
 echo "HELP:
- fzf-kill allow you to kill your programs in a quick and intuitive way
- without the cluttered user experience, 
- or the uncomfortable keybindings of other task killers.
-
+ fzf-kill allows you to kill your programs in a quick and intuitive way.
 
  # BASIC COMMANDS
- * --parents           Show only parent processes. (default)
+ * --parents           Show only parent processes (default).
  * --all               Show both parent and children processes.
- 
-                       
- # ADVANCED OPTIONS    
- * --exclude           You can exclude a list of programs from appearing on the list.
-                      
-                       Use it like:
-                       fzf-kill --exclude='word1|word2|word2'
- 
-                       You can also pipe it from a file like:
-                       fzf-kill --exclude="'$(cat ~/.config/fzf-kill/my_excludes.txt)'"
- 
- * --loop              fzf-kill will stay open even after killing a program.
 
-                       
- * --fzf_default_ops   You can  use it to override the env var FZF_DEFAULT_OPTS.
-                       
-                       Use it like:
-                       fzf-kill --fzf_default_ops=\"--min-height=100 --prompt 'kill -9 '\"
-                       
- * --showroot          List both root and user processes running in the session.
-                       By default is disabled. Meaning by default we show only 
-                       processes owned by the user. 
-                       
-                       Please note that this option won't let you kill anything
-                       launched by root unless you are root, or run fzf-kill with
-                       sudo privileges (which by general rule, you shouldn't).
- "
-
-
+ # ADVANCED OPTIONS
+ * --exclude           Exclude specific words (e.g., --exclude='chrome|slack').
+ * --loop              Stay open even after killing a program.
+ * --fzf_default_ops   Override the FZF_DEFAULT_OPTS environment variable.
+ * --showroot          List both root and user processes.
+"
 }
 
 # ENTRY POINT
 # ========================================================
-
-# Do while
-do="true"
-while [ "$do" = "true" ] ; do
-
-    # Help
+while true; do
     if [ "$SHOW_HELP" = "true" ]; then
       show_help
       break
     fi
 
-    # Code
     if [ "$DETAILED_MODE" = "true" ]; then
       detailed_mode
     else
       simple_mode
     fi
 
-    # Exit condition
-    if [ "$LOOP_MODE" = "false" ]; then
-      do="false"
-    fi
-
+    # Break loop if not in loop mode
+    [[ "$LOOP_MODE" == "false" ]] && break
 done
 
