@@ -1,7 +1,7 @@
 # fzf-kill (macOS port)
 The no-nonsense task killer for your terminal.
 
-![screenshot_2023-04-28_21-53-54_742158876](https://user-images.githubusercontent.com/3357792/235240651-2d20db69-88f8-410e-aca2-d40e34934068.png)
+![Screenshot_2026-02-09_badbb5daaa30](https://github.com/user-attachments/assets/1a51da40-0af4-4fef-90d4-badbb5daaa30)
 
 ## Why this port?
 The original fzf-kill was designed for Linux. This version adapts the logic to handle macOS's BSD-style `ps` flags and system utilities while keeping the same workflow.
