@@ -1,4 +1,4 @@
-# fzf-kill (macOS Port)
+# fzf-kill (macOS port)
 The no-nonsense task killer for your terminal.
 
 ![screenshot_2023-04-28_21-53-54_742158876](https://user-images.githubusercontent.com/3357792/235240651-2d20db69-88f8-410e-aca2-d40e34934068.png)
@@ -14,14 +14,24 @@ I have provided two ways to run this on Mac:
 | `fzf-kill` | **Optimized refactor for macOS**. Uses macOS-native command flags and simplified logic for better performance. |
 | `fzf-kill-legacy.sh` | **1:1 structural port**. Retains the original Linux script's logic flow for those who prefer the explicit structure. |
 
-## How to install
+## Installation & Makefile Targets
+This project includes a professional Makefile to handle installation and cleanup.
 
 ### Prerequisites
-You must have `fzf` installed:
+You must have [fzf](https://github.com/junegunn/fzf) installed via [Homebrew](https://brew.sh/):
 
     brew install fzf
 
-### Installation
+### Quick Install Commands
+
+| Command | Action |
+| :--- | :--- |
+| `make user-install` | **Recommended:** Installs scripts to `~/.local/bin` (No sudo required). |
+| `sudo make install` | System-wide install to `/usr/local/bin`. |
+| `make uninstall` | Removes scripts from both user and system paths. |
+| `make clean` | **Workspace Only:** Clears development artifacts (like the `test/` directory). |
+
+### Manual Installation
 Choose your preferred version and manually put the file into `/usr/local/bin` or `~/.local/bin`:
 
 ```
